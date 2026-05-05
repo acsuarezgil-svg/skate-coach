@@ -1,3 +1,4 @@
+#rebuild trigger
 # app_mobile.py
 # Mobile-first Skate Flow Coach
 # Keep your original app.py for desktop/tuning.
