@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 import streamlit as st
 
+from analysis.person_detector import detect_person_roi_mediapipe
+
 # -------------------------
 # ROI detection / tracking
 # -------------------------
@@ -108,6 +110,64 @@ def detect_motion_roi_in_frame(prev_gray, frame, min_area=1200, pad=40):
 
     return (int(x1), int(y1), int(x2 - x1), int(y2 - y1)), gray
 
+def find_skater_like_motion_roi(prev_gray, frame, min_area=2500, pad=80):
+    H, W = frame.shape[:2]
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (21, 21), 0)
+
+    diff = cv2.absdiff(prev_gray, gray)
+    _, thresh = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)
+    thresh = cv2.dilate(thresh, None, iterations=2)
+
+    contours, _ = cv2.findContours(
+        thresh,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+
+    candidates = []
+
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area < min_area:
+            continue
+
+        x, y, w, h = cv2.boundingRect(cnt)
+
+        if h < H * 0.18:
+            continue
+
+        if w < W * 0.05:
+            continue
+
+        aspect = w / float(h)
+
+        if aspect < 0.25 or aspect > 2.2:
+            continue
+
+        score = area + (h * 8)
+        if h > H * 0.28:
+            score *= 1.4
+
+        candidates.append((score, x, y, w, h))
+
+    if not candidates:
+        return None, gray
+
+    _, x, y, w, h = max(candidates, key=lambda c: c[0])
+
+    extra_top = int(h * 0.90)
+    extra_side = int(w * 0.50)
+    extra_bottom = int(h * 0.35)
+
+    x1 = max(0, x - pad - extra_side)
+    y1 = max(0, y - pad - extra_top)
+    x2 = min(W, x + w + pad + extra_side)
+    y2 = min(H, y + h + pad + extra_bottom)
+
+    return (int(x1), int(y1), int(x2 - x1), int(y2 - y1)), gray
+
 
 def track_roi_csrt(
     video_path,
@@ -117,6 +177,7 @@ def track_roi_csrt(
     roi_pad=40,
     show_debug=False,
     dynamic_roi=True,
+    preview_callback=None,
 ):
     cap = cv2.VideoCapture(video_path)
     ret, frame0 = cap.read()
@@ -144,12 +205,18 @@ def track_roi_csrt(
         roi = (0, 0, W, H)
 
     elif roi_mode == "Auto ROI":
-        roi = auto_detect_roi_motion(
-            video_path,
-            sample_seconds=2.0,
-            min_area=1500,
-            pad=max(40, int(roi_pad)),
+        roi = detect_person_roi_mediapipe(
+            frame0, 
+            pad=max(60, int(roi_pad)),
         )
+        
+        if roi is None:
+            roi = auto_detect_roi_motion(
+                video_path,
+                sample_seconds=2.0,
+                min_area=1500,
+                pad=max(40, int(roi_pad)),
+            )
         if roi is None:
             st.warning("Auto ROI failed — switching to Manual ROI.")
             roi_mode = "Manual"
@@ -208,27 +275,73 @@ def track_roi_csrt(
         success, box = tracker.update(frame)
 
         if not success and dynamic_roi:
-            recovered_roi, _ = detect_motion_roi_in_frame(
+            recovered_roi, _ = find_skater_like_motion_roi(
                 prev_gray,
                 frame,
-                min_area=1200,
-                pad=max(40, int(roi_pad)),
+                min_area=2500,
+                pad=max(80, int(roi_pad)),
             )
+            if recovered_roi is None:
+                recovered_roi, _ = detect_motion_roi_in_frame(
+                    prev_gray,
+                    frame,
+                    min_area=1200,
+                    pad=max(40, int(roi_pad)),
+                )
+            
             if recovered_roi is not None:
                 rx, ry, rw, rh = recovered_roi
+
                 if rw * rh > 1500:
                     try:
                         tracker = cv2.TrackerCSRT_create()
                     except AttributeError:
                         tracker = cv2.legacy.TrackerCSRT_create()
+
                     tracker.init(frame, recovered_roi)
                     success, box = True, recovered_roi
 
+        if success and dynamic_roi and idx % 30 == 0:
+            refreshed_roi, _ = find_skater_like_motion_roi(
+                prev_gray,
+                frame,
+                min_area=2500,
+                pad=max(100, int(roi_pad)),
+            )
+
+            if refreshed_roi is not None:
+                rx, ry, rw, rh = refreshed_roi
+                bx, by, bw, bh = box
+
+                old_area = float(bw * bh)
+                new_area = float(rw * rh)
+
+                if new_area > old_area * 0.85:
+                    try:
+                        tracker = cv2.TrackerCSRT_create()
+                    except AttributeError:
+                        tracker = cv2.legacy.TrackerCSRT_create()
+
+                    tracker.init(frame, refreshed_roi)
+                    success, box = True, refreshed_roi
         if success:
             x, y, w, h = box
             cx = float(x + w / 2)
             cy = float(y + 0.85 * h)
             traj.append((idx / float(fps), cx, cy))
+
+            if preview_callback and idx % 15 == 0:
+                dbg = frame.copy()
+
+                cv2.rectangle(
+                    dbg,
+                    (int(x), int(y)),
+                    (int(x + w), int(y + h)),
+                    (0, 255, 0),
+                    2,
+                )
+
+                preview_callback(dbg)
 
         if dynamic_roi:
             prev_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)

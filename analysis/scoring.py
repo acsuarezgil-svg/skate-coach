@@ -99,6 +99,7 @@ def detect_ollie_candidates_from_traj(
         return []
 
     t = np.array([p[0] for p in traj], dtype=float)
+    x = np.array([p[1] for p in traj], dtype=float)
     y = np.array([p[2] for p in traj], dtype=float)
 
     win = max(5, int(float(fps) * 0.25))
@@ -124,6 +125,16 @@ def detect_ollie_candidates_from_traj(
         idxs = np.where(m)[0]
 
         if len(idxs) >= 10:
+            x_seg = x[idxs]
+            y_seg = y_s[idxs]
+
+            vertical_amp = float(np.max(y_seg) - np.min(y_seg))
+            horizontal_amp = float(np.max(x_seg) - np.min(x_seg))
+
+            if horizontal_amp > vertical_amp * 3.0:
+                cur += float(step_s)
+                continue
+            
             vy_slice0 = max(idxs[0] - 1, 0)
             vy_slice1 = max(idxs[-1] - 1, 1)
             ay_slice0 = max(idxs[0] - 2, 0)
