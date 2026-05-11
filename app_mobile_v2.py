@@ -702,22 +702,21 @@ if video_file:
         progress_bar.progress(35)
 
 
-        with st.spinner("Tracking rider..."):
-            traj = track_roi_csrt(
-                tmp_path,
-                meta["fps"],
-                tracking_step_frames=settings["tracking_step"],
-                roi_mode=settings["roi_mode"],
-                roi_pad=settings["roi_pad"],
-                show_debug=settings["show_roi_debug"],
-                dynamic_roi=settings["dynamic_roi"],
-                preview_callback=lambda img: preview_frame.image(
-                    cv2.cvtColor(img, cv2.COLOR_BGR2RGB),
-                    caption="Live tracking preview",
-                    width="stretch",
-                ),
-            )
-            st.write("Trajectory points:", len(traj))
+        traj = track_roi_csrt(
+            tmp_path,
+            meta["fps"],
+            tracking_step_frames=settings["tracking_step"],
+            roi_mode=settings["roi_mode"],
+            roi_pad=settings["roi_pad"],
+            show_debug=settings["show_roi_debug"],
+            dynamic_roi=settings["dynamic_roi"],
+            preview_callback=lambda img: preview_frame.image(
+                cv2.cvtColor(img, cv2.COLOR_BGR2RGB),
+                caption="Live tracking preview",
+                width="stretch",
+            ),
+        )
+        st.write("Trajectory points:", len(traj))
         
         status_box.write("📈 Building motion trajectory...")
         progress_bar.progress(60)
